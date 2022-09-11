@@ -23,6 +23,10 @@ type Keymap struct {
 	Button2 Keystate
 	Button3 Keystate
 
+	Button1Alt Keystate
+	Button2Alt Keystate
+	Button3Alt Keystate
+
 	ScrollUp    Keystate
 	ScrollDown  Keystate
 	ScrollLeft  Keystate
@@ -213,22 +217,26 @@ func main() {
 	}
 
 	keymap := Keymap{
-		Up:    Keystate{Keycode: 31},
-		Down:  Keystate{Keycode: 45},
-		Left:  Keystate{Keycode: 44},
-		Right: Keystate{Keycode: 46},
+		Up:    Keystate{Keycode: 31}, // I
+		Down:  Keystate{Keycode: 45}, // K
+		Left:  Keystate{Keycode: 44}, // J
+		Right: Keystate{Keycode: 46}, // L
 
-		Button1: Keystate{Keycode: 41, NoGrab: true},
-		Button2: Keystate{Keycode: 40, NoGrab: true},
-		Button3: Keystate{Keycode: 39, NoGrab: true},
+		Button1: Keystate{Keycode: 41, NoGrab: true}, // S
+		Button2: Keystate{Keycode: 40, NoGrab: true}, // D
+		Button3: Keystate{Keycode: 39, NoGrab: true}, // F
 
-		ScrollUp:    Keystate{Keycode: 43},
-		ScrollDown:  Keystate{Keycode: 57},
-		ScrollLeft:  Keystate{Keycode: 30},
-		ScrollRight: Keystate{Keycode: 32},
+		Button1Alt: Keystate{Keycode: 58, NoGrab: true}, // M
+		Button2Alt: Keystate{Keycode: 59, NoGrab: true}, // ,
+		Button3Alt: Keystate{Keycode: 60, NoGrab: true}, // .
 
-		Decelerate: Keystate{Keycode: 65},
-		MLock:      Keystate{Keycode: 33},
+		ScrollUp:    Keystate{Keycode: 43}, // H
+		ScrollDown:  Keystate{Keycode: 57}, // N
+		ScrollLeft:  Keystate{Keycode: 30}, // U
+		ScrollRight: Keystate{Keycode: 32}, // O
+
+		Decelerate: Keystate{Keycode: 65}, // Space
+		MLock:      Keystate{Keycode: 33}, // P
 	}
 
 	println("Installing passive grabs")
@@ -239,6 +247,9 @@ func main() {
 	GrabKey(X, keymap.Button1)
 	GrabKey(X, keymap.Button2)
 	GrabKey(X, keymap.Button3)
+	GrabKey(X, keymap.Button1Alt)
+	GrabKey(X, keymap.Button2Alt)
+	GrabKey(X, keymap.Button3Alt)
 	GrabKey(X, keymap.ScrollUp)
 	GrabKey(X, keymap.ScrollDown)
 	GrabKey(X, keymap.ScrollLeft)
@@ -281,6 +292,12 @@ func main() {
 				key = &keymap.Button2
 			case keymap.Button3.Keycode:
 				key = &keymap.Button3
+			case keymap.Button1Alt.Keycode:
+				key = &keymap.Button1
+			case keymap.Button2Alt.Keycode:
+				key = &keymap.Button2
+			case keymap.Button3Alt.Keycode:
+				key = &keymap.Button3
 			case keymap.ScrollUp.Keycode:
 				key = &keymap.ScrollUp
 			case keymap.ScrollDown.Keycode:
@@ -318,6 +335,12 @@ func main() {
 			case keymap.Button2.Keycode:
 				key = &keymap.Button2
 			case keymap.Button3.Keycode:
+				key = &keymap.Button3
+			case keymap.Button1Alt.Keycode:
+				key = &keymap.Button1
+			case keymap.Button2Alt.Keycode:
+				key = &keymap.Button2
+			case keymap.Button3Alt.Keycode:
 				key = &keymap.Button3
 			case keymap.ScrollUp.Keycode:
 				key = &keymap.ScrollUp
