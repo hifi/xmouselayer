@@ -22,7 +22,6 @@ Also got a reason to hack something small together.
 
 TODO
 ----
-- Configurability
 - Better logging
 - Daemonizing
 - XKB key repeat hint (works fine without, though)

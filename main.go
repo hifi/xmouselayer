@@ -3,44 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
+	"io/ioutil"
+	"os"
 	"time"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/xproto"
 	"github.com/jezek/xgb/xtest"
+	"gopkg.in/yaml.v3"
 )
-
-type Keymap struct {
-	lock sync.RWMutex
-
-	Up    Keystate
-	Down  Keystate
-	Left  Keystate
-	Right Keystate
-
-	Button1 Keystate
-	Button2 Keystate
-	Button3 Keystate
-
-	Button1Alt Keystate
-	Button2Alt Keystate
-	Button3Alt Keystate
-
-	ScrollUp    Keystate
-	ScrollDown  Keystate
-	ScrollLeft  Keystate
-	ScrollRight Keystate
-
-	Decelerate Keystate
-	MLock      Keystate
-}
-
-type Keystate struct {
-	Keycode xproto.Keycode
-	NoGrab  bool
-	Down    bool
-}
 
 func GrabKey(X *xgb.Conn, key Keystate) (err error) {
 	if key.Keycode == 0 || key.NoGrab {
@@ -71,7 +42,7 @@ func XTestFakeButtonEvent(X *xgb.Conn, button xproto.Button, down bool, delay ui
 	}
 }
 
-func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy int16) {
+func MotionEngine(ctx context.Context, X *xgb.Conn, config *Config, ix int16, iy int16) {
 	x := float32(ix)
 	y := float32(iy)
 	setup := xproto.Setup(X)
@@ -80,9 +51,8 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy
 	xproto.GrabKeyboard(X, true, screen.Root, xproto.TimeCurrentTime, xproto.GrabModeAsync, xproto.GrabModeAsync)
 	defer xproto.UngrabKeyboard(X, xproto.TimeCurrentTime)
 
-	speed := float32(0.5)
+	speed := config.Speed
 	accel := float32(0.0)
-	maxAccel := float32(6.0)
 
 	button1 := false
 	button2 := false
@@ -93,7 +63,7 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Millisecond * 1):
+		case <-time.After(time.Millisecond * time.Duration(1000/config.Rate)):
 		}
 
 		now := time.Now()
@@ -103,37 +73,37 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy
 		obutton2 := button2
 		obutton3 := button3
 
-		keymap.lock.RLock()
-		if keymap.Up.Down {
+		config.Keymap.lock.RLock()
+		if config.Keymap.Up.Down {
 			y -= speed + accel
 		}
 
-		if keymap.Down.Down {
+		if config.Keymap.Down.Down {
 			y += speed + accel
 		}
 
-		if keymap.Left.Down {
+		if config.Keymap.Left.Down {
 			x -= speed + accel
 		}
 
-		if keymap.Right.Down {
+		if config.Keymap.Right.Down {
 			x += speed + accel
 		}
 
-		button1 = keymap.Button1.Down
-		button2 = keymap.Button2.Down
-		button3 = keymap.Button3.Down
-		scrollUp := keymap.ScrollUp.Down
-		scrollDn := keymap.ScrollDown.Down
-		scrollLe := keymap.ScrollLeft.Down
-		scrollRi := keymap.ScrollRight.Down
-		decelerate := keymap.Decelerate.Down
+		button1 = config.Keymap.Button1.Down
+		button2 = config.Keymap.Button2.Down
+		button3 = config.Keymap.Button3.Down
+		scrollUp := config.Keymap.ScrollUp.Down
+		scrollDn := config.Keymap.ScrollDown.Down
+		scrollLe := config.Keymap.ScrollLeft.Down
+		scrollRi := config.Keymap.ScrollRight.Down
+		decelerate := config.Keymap.Decelerate.Down
 
-		keymap.lock.RUnlock()
+		config.Keymap.lock.RUnlock()
 
 		if decelerate {
 			accel = 0
-			speed = 0.25
+			speed = config.MinSpeed
 		}
 
 		if x < 0 {
@@ -151,12 +121,12 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy
 
 		if x != ox || y != oy {
 			XTestFakeMotionEvent(X, 0, int16(ox), int16(oy), 0)
-			if accel < maxAccel {
-				accel += 0.005
+			if accel < config.MaxAcceleration {
+				accel += config.Acceleration
 			}
 		} else {
 			if accel > 0 {
-				accel -= 0.2
+				accel -= config.Deceleration
 			}
 		}
 
@@ -175,21 +145,21 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, keymap *Keymap, ix int16, iy
 		if scrollUp && now.After(nextScroll) {
 			XTestFakeButtonEvent(X, xproto.ButtonIndex4, true, 0)
 			XTestFakeButtonEvent(X, xproto.ButtonIndex4, false, 0)
-			nextScroll = now.Add(time.Millisecond * 50)
+			nextScroll = now.Add(time.Millisecond * time.Duration(1000/config.ScrollRate))
 		} else if scrollDn && now.After(nextScroll) {
 			XTestFakeButtonEvent(X, xproto.ButtonIndex5, true, 0)
 			XTestFakeButtonEvent(X, xproto.ButtonIndex5, false, 0)
-			nextScroll = now.Add(time.Millisecond * 50)
+			nextScroll = now.Add(time.Millisecond * time.Duration(1000/config.ScrollRate))
 		}
 
 		if scrollLe && now.After(nextScroll) {
 			XTestFakeButtonEvent(X, 6, true, 0)
 			XTestFakeButtonEvent(X, 6, false, 0)
-			nextScroll = now.Add(time.Millisecond * 50)
+			nextScroll = now.Add(time.Millisecond * time.Duration(1000/config.ScrollRate))
 		} else if scrollRi && now.After(nextScroll) {
 			XTestFakeButtonEvent(X, 7, true, 0)
 			XTestFakeButtonEvent(X, 7, false, 0)
-			nextScroll = now.Add(time.Millisecond * 50)
+			nextScroll = now.Add(time.Millisecond * time.Duration(1000/config.ScrollRate))
 		}
 	}
 }
@@ -216,46 +186,39 @@ func main() {
 		panic("Not enough keycodes in modmap")
 	}
 
-	keymap := Keymap{
-		Up:    Keystate{Keycode: 31}, // I
-		Down:  Keystate{Keycode: 45}, // K
-		Left:  Keystate{Keycode: 44}, // J
-		Right: Keystate{Keycode: 46}, // L
+	var config Config
+	println("Loading config.yaml")
 
-		Button1: Keystate{Keycode: 41, NoGrab: true}, // S
-		Button2: Keystate{Keycode: 40, NoGrab: true}, // D
-		Button3: Keystate{Keycode: 39, NoGrab: true}, // F
+	// TODO this is pretty ugly
+	if _, err := os.Stat("config.yaml"); err != nil {
+		println("No config found, writing out default config.yaml")
+		config = DefaultConfigWithKeymap()
+		data, _ := yaml.Marshal(&config)
+		ioutil.WriteFile("config.yaml", data, 0o644)
+	}
 
-		Button1Alt: Keystate{Keycode: 58, NoGrab: true}, // M
-		Button2Alt: Keystate{Keycode: 59, NoGrab: true}, // ,
-		Button3Alt: Keystate{Keycode: 60, NoGrab: true}, // .
-
-		ScrollUp:    Keystate{Keycode: 43}, // H
-		ScrollDown:  Keystate{Keycode: 57}, // N
-		ScrollLeft:  Keystate{Keycode: 30}, // U
-		ScrollRight: Keystate{Keycode: 32}, // O
-
-		Decelerate: Keystate{Keycode: 65}, // Space
-		MLock:      Keystate{Keycode: 33}, // P
+	config, err = LoadConfig("config.yaml")
+	if err != nil {
+		panic(err)
 	}
 
 	println("Installing passive grabs")
-	GrabKey(X, keymap.Up)
-	GrabKey(X, keymap.Down)
-	GrabKey(X, keymap.Left)
-	GrabKey(X, keymap.Right)
-	GrabKey(X, keymap.Button1)
-	GrabKey(X, keymap.Button2)
-	GrabKey(X, keymap.Button3)
-	GrabKey(X, keymap.Button1Alt)
-	GrabKey(X, keymap.Button2Alt)
-	GrabKey(X, keymap.Button3Alt)
-	GrabKey(X, keymap.ScrollUp)
-	GrabKey(X, keymap.ScrollDown)
-	GrabKey(X, keymap.ScrollLeft)
-	GrabKey(X, keymap.ScrollRight)
-	GrabKey(X, keymap.Decelerate)
-	GrabKey(X, keymap.MLock)
+	GrabKey(X, config.Keymap.Up)
+	GrabKey(X, config.Keymap.Down)
+	GrabKey(X, config.Keymap.Left)
+	GrabKey(X, config.Keymap.Right)
+	GrabKey(X, config.Keymap.Button1)
+	GrabKey(X, config.Keymap.Button2)
+	GrabKey(X, config.Keymap.Button3)
+	GrabKey(X, config.Keymap.Button1Alt)
+	GrabKey(X, config.Keymap.Button2Alt)
+	GrabKey(X, config.Keymap.Button3Alt)
+	GrabKey(X, config.Keymap.ScrollUp)
+	GrabKey(X, config.Keymap.ScrollDown)
+	GrabKey(X, config.Keymap.ScrollLeft)
+	GrabKey(X, config.Keymap.ScrollRight)
+	GrabKey(X, config.Keymap.Decelerate)
+	GrabKey(X, config.Keymap.MLock)
 
 	println("Handling input")
 	var x int16
@@ -278,37 +241,37 @@ func main() {
 			y = ev.RootY
 
 			switch ev.Detail {
-			case keymap.Up.Keycode:
-				key = &keymap.Up
-			case keymap.Down.Keycode:
-				key = &keymap.Down
-			case keymap.Left.Keycode:
-				key = &keymap.Left
-			case keymap.Right.Keycode:
-				key = &keymap.Right
-			case keymap.Button1.Keycode:
-				key = &keymap.Button1
-			case keymap.Button2.Keycode:
-				key = &keymap.Button2
-			case keymap.Button3.Keycode:
-				key = &keymap.Button3
-			case keymap.Button1Alt.Keycode:
-				key = &keymap.Button1
-			case keymap.Button2Alt.Keycode:
-				key = &keymap.Button2
-			case keymap.Button3Alt.Keycode:
-				key = &keymap.Button3
-			case keymap.ScrollUp.Keycode:
-				key = &keymap.ScrollUp
-			case keymap.ScrollDown.Keycode:
-				key = &keymap.ScrollDown
-			case keymap.ScrollLeft.Keycode:
-				key = &keymap.ScrollLeft
-			case keymap.ScrollRight.Keycode:
-				key = &keymap.ScrollRight
-			case keymap.Decelerate.Keycode:
-				key = &keymap.Decelerate
-			case keymap.MLock.Keycode:
+			case config.Keymap.Up.Keycode:
+				key = &config.Keymap.Up
+			case config.Keymap.Down.Keycode:
+				key = &config.Keymap.Down
+			case config.Keymap.Left.Keycode:
+				key = &config.Keymap.Left
+			case config.Keymap.Right.Keycode:
+				key = &config.Keymap.Right
+			case config.Keymap.Button1.Keycode:
+				key = &config.Keymap.Button1
+			case config.Keymap.Button2.Keycode:
+				key = &config.Keymap.Button2
+			case config.Keymap.Button3.Keycode:
+				key = &config.Keymap.Button3
+			case config.Keymap.Button1Alt.Keycode:
+				key = &config.Keymap.Button1
+			case config.Keymap.Button2Alt.Keycode:
+				key = &config.Keymap.Button2
+			case config.Keymap.Button3Alt.Keycode:
+				key = &config.Keymap.Button3
+			case config.Keymap.ScrollUp.Keycode:
+				key = &config.Keymap.ScrollUp
+			case config.Keymap.ScrollDown.Keycode:
+				key = &config.Keymap.ScrollDown
+			case config.Keymap.ScrollLeft.Keycode:
+				key = &config.Keymap.ScrollLeft
+			case config.Keymap.ScrollRight.Keycode:
+				key = &config.Keymap.ScrollRight
+			case config.Keymap.Decelerate.Keycode:
+				key = &config.Keymap.Decelerate
+			case config.Keymap.MLock.Keycode:
 			case modmap.Keycodes[24]:
 				if mlock {
 					mlock = false
@@ -316,9 +279,9 @@ func main() {
 			}
 
 			if key != nil {
-				keymap.lock.Lock()
+				config.Keymap.lock.Lock()
 				key.Down = true
-				keymap.lock.Unlock()
+				config.Keymap.lock.Unlock()
 			}
 
 		case xproto.KeyReleaseEvent:
@@ -326,41 +289,41 @@ func main() {
 			y = ev.RootY
 
 			switch ev.Detail {
-			case keymap.Up.Keycode:
-				key = &keymap.Up
-			case keymap.Down.Keycode:
-				key = &keymap.Down
-			case keymap.Left.Keycode:
-				key = &keymap.Left
-			case keymap.Right.Keycode:
-				key = &keymap.Right
-			case keymap.Button1.Keycode:
-				key = &keymap.Button1
-			case keymap.Button2.Keycode:
-				key = &keymap.Button2
-			case keymap.Button3.Keycode:
-				key = &keymap.Button3
-			case keymap.Button1Alt.Keycode:
-				key = &keymap.Button1
-			case keymap.Button2Alt.Keycode:
-				key = &keymap.Button2
-			case keymap.Button3Alt.Keycode:
-				key = &keymap.Button3
-			case keymap.ScrollUp.Keycode:
-				key = &keymap.ScrollUp
-			case keymap.ScrollDown.Keycode:
-				key = &keymap.ScrollDown
-			case keymap.ScrollLeft.Keycode:
-				key = &keymap.ScrollLeft
-			case keymap.ScrollRight.Keycode:
-				key = &keymap.ScrollRight
-			case keymap.Decelerate.Keycode:
-				key = &keymap.Decelerate
-			case keymap.MLock.Keycode:
+			case config.Keymap.Up.Keycode:
+				key = &config.Keymap.Up
+			case config.Keymap.Down.Keycode:
+				key = &config.Keymap.Down
+			case config.Keymap.Left.Keycode:
+				key = &config.Keymap.Left
+			case config.Keymap.Right.Keycode:
+				key = &config.Keymap.Right
+			case config.Keymap.Button1.Keycode:
+				key = &config.Keymap.Button1
+			case config.Keymap.Button2.Keycode:
+				key = &config.Keymap.Button2
+			case config.Keymap.Button3.Keycode:
+				key = &config.Keymap.Button3
+			case config.Keymap.Button1Alt.Keycode:
+				key = &config.Keymap.Button1
+			case config.Keymap.Button2Alt.Keycode:
+				key = &config.Keymap.Button2
+			case config.Keymap.Button3Alt.Keycode:
+				key = &config.Keymap.Button3
+			case config.Keymap.ScrollUp.Keycode:
+				key = &config.Keymap.ScrollUp
+			case config.Keymap.ScrollDown.Keycode:
+				key = &config.Keymap.ScrollDown
+			case config.Keymap.ScrollLeft.Keycode:
+				key = &config.Keymap.ScrollLeft
+			case config.Keymap.ScrollRight.Keycode:
+				key = &config.Keymap.ScrollRight
+			case config.Keymap.Decelerate.Keycode:
+				key = &config.Keymap.Decelerate
+			case config.Keymap.MLock.Keycode:
 				if !mlock {
 					println("Mlock enabled")
 					mlock = true
-					key = &keymap.MLock // to always enable motion engine
+					key = &config.Keymap.MLock // to always enable motion engine
 				} else {
 					if cancel != nil && !mod {
 						println("Mlock released")
@@ -383,9 +346,9 @@ func main() {
 			}
 
 			if key != nil {
-				keymap.lock.Lock()
+				config.Keymap.lock.Lock()
 				key.Down = false
-				keymap.lock.Unlock()
+				config.Keymap.lock.Unlock()
 			}
 		default:
 			fmt.Printf("Unhandled event: %s\n", ev.String())
@@ -395,7 +358,7 @@ func main() {
 			var ctx context.Context
 			ctx, cancel = context.WithCancel(context.Background())
 			mod = true
-			go MotionEngine(ctx, X, &keymap, x, y)
+			go MotionEngine(ctx, X, &config, x, y)
 		}
 	}
 }
