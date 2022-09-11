@@ -309,6 +309,10 @@ func main() {
 			case keymap.Decelerate.Keycode:
 				key = &keymap.Decelerate
 			case keymap.MLock.Keycode:
+			case modmap.Keycodes[24]:
+				if mlock {
+					mlock = false
+				}
 			}
 
 			if key != nil {
