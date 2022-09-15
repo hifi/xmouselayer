@@ -164,6 +164,24 @@ func MotionEngine(ctx context.Context, X *xgb.Conn, config *Config, ix int16, iy
 	}
 }
 
+func GetModMap(X *xgb.Conn) (map[xproto.Keycode]int, error) {
+	xmodmap, err := xproto.GetModifierMapping(X).Reply()
+	if err != nil {
+		return nil, err
+	}
+
+	modmap := map[xproto.Keycode]int{}
+
+	for i, keycode := range xmodmap.Keycodes {
+		if keycode == 0 {
+			continue
+		}
+		modmap[keycode] = i / int(xmodmap.KeycodesPerModifier)
+	}
+
+	return modmap, nil
+}
+
 func main() {
 	println("xmouselayer")
 
@@ -175,15 +193,6 @@ func main() {
 	err = xtest.Init(X)
 	if err != nil {
 		panic(err)
-	}
-
-	modmap, err := xproto.GetModifierMapping(X).Reply()
-	if err != nil {
-		panic(err)
-	}
-
-	if len(modmap.Keycodes) < 32 {
-		panic("Not enough keycodes in modmap")
 	}
 
 	var config Config
@@ -201,6 +210,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	//modifiers := []string{"shift", "lock", "control", "mod1", "mod2", "mod3", "mod4", "mod5"}
+	modindex := int(6) // TODO make configurable
+	modmap, _ := GetModMap(X)
 
 	println("Installing passive grabs")
 	GrabKey(X, config.Keymap.Up)
@@ -272,9 +285,11 @@ func main() {
 			case config.Keymap.Decelerate.Keycode:
 				key = &config.Keymap.Decelerate
 			case config.Keymap.MLock.Keycode:
-			case modmap.Keycodes[24]:
-				if mlock {
-					mlock = false
+			default:
+				if modkey, ok := modmap[ev.Detail]; ok && modkey == modindex {
+					if mlock {
+						mlock = false
+					}
 				}
 			}
 
@@ -332,15 +347,16 @@ func main() {
 					}
 					mlock = false
 				}
-			case modmap.Keycodes[24]:
-				// TODO this is weird
-				// cancel motion if we release modifier
-				if cancel != nil {
-					if mlock {
-						mod = false
-					} else {
-						cancel()
-						cancel = nil
+			default:
+				if modkey, ok := modmap[ev.Detail]; ok && modkey == modindex {
+					// cancel motion if we release modifier
+					if cancel != nil {
+						if mlock {
+							mod = false
+						} else {
+							cancel()
+							cancel = nil
+						}
 					}
 				}
 			}
